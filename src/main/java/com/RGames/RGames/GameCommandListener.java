@@ -4,8 +4,8 @@ package com.RGames.RGames;
 import com.RGames.RGames.DataBase.DataBaseService;
 import com.RGames.RGames.DataBase.Entity.Game;
 import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
-import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.utils.FileUpload;
@@ -25,32 +25,33 @@ public class GameCommandListener extends ListenerAdapter {
         this.dbService = dbService;
     }
 
+    public void registerMessageOwner(String messageId, long userId) {
+        messageOwners.put(messageId, userId);
+    }
+
     @Override
-    public void onMessageReceived(@NotNull MessageReceivedEvent event) {
-        System.out.println("Получено сообщение: " + event.getMessage().getContentRaw()); // Проверка
+    public void onSlashCommandInteraction(@NotNull SlashCommandInteractionEvent event) {
+        System.out.println("Получено сообщение: " + event.getName()); // Проверка
 
-        if (event.getAuthor().isBot()) return;
+        if (!event.getName().equals("games")) return;
 
-        String message = event.getMessage().getContentRaw();
-        String user = event.getAuthor().getName();
 
-        switch (message.toLowerCase()) {
-            case "!games":
-                EmbedBuilder embed = new EmbedBuilder()
-                        .setTitle("Выбор игры \uD83C\uDFAE")
-                        .setDescription("Выберете категорию игр, которая вас интересует:")
-                        .setColor(0x00ff00);
+        EmbedBuilder embed = new EmbedBuilder()
+                .setTitle("Выбор игры \uD83C\uDFAE")
+                .setDescription("Выберете категорию игр, которая вас интересует:")
+                .setColor(0x00ff00);
 
-                event.getChannel().sendMessageEmbeds(embed.build())
-                        .setActionRow(
-                                Button.primary("td_games", "Tower Defense"),
-                                Button.success("fun_games", "Fun Games"),
-                                Button.danger("web_games", "Web Games")
-                        ).queue(sentMessage -> {
-                            messageOwners.put(sentMessage.getId(), event.getAuthor().getIdLong());
-                        });
-
-        }
+        event.replyEmbeds(embed.build())
+                .addActionRow(
+                        Button.primary("td_games", "Tower Defense"),
+                        Button.success("fun_games", "Fun Games"),
+                        Button.danger("web_games", "Web Games")
+                ).queue(response -> {
+                    // Получаем отправленное сообщение и сохраняем его id для проверки владельца при нажатии кнопок.
+                    event.getHook().retrieveOriginal().queue(message -> {
+                        messageOwners.put(message.getId(), event.getUser().getIdLong());
+                    });
+                });
     }
 
     @Override

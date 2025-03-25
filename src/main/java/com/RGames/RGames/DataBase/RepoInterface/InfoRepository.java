@@ -10,5 +10,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface InfoRepository extends JpaRepository<Info, Long> {
-    Optional<Info> findByGameIdAndType(Game game, String type);
+    Optional<Info> findByGameIdAndType(Long gameId, String type);
 }

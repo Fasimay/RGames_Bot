@@ -4,6 +4,7 @@ package com.RGames.RGames;
 import lombok.RequiredArgsConstructor;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -23,6 +24,11 @@ public class BotConfig {
                 .addEventListeners(gameCommandListener, rerollCommandListener)
                 .build()
                 .awaitReady();
+
+        jda.updateCommands().addCommands(
+            Commands.slash("games", "Выбрать игру"),
+            Commands.slash("reroll", "Сделать роллы")
+        ).queue();
 
         return jda;
     }

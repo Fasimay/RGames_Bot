@@ -19,4 +19,10 @@ public class Info {
     @ManyToOne
     @JoinColumn(name = "game_id")
     private Game game;
+
+    public Info(Game game, String type, String content) {
+        this.game = game;
+        this.type = type;
+        this.content = content;
+    }
 }

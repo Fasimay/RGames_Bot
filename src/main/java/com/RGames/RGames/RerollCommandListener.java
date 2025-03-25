@@ -4,9 +4,9 @@ import com.RGames.RGames.DataBase.DataBaseService;
 import com.RGames.RGames.DataBase.Entity.Traits;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
+import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
-import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
@@ -24,7 +24,7 @@ public class RerollCommandListener extends ListenerAdapter {
 
     private final DataBaseService dbService;
     private final Map<String, Long> messageOwners = new HashMap<>();
-    private final Map<Long, Long> userChoice = new HashMap<>();
+    final Map<Long, Map<String, Long>> userChoice = new HashMap<>();
     private final Map<Long, Integer> rollCount = new HashMap<>();
     private final Map<Long, Map<String, Integer>> rollHistory = new HashMap<>();
 
@@ -32,29 +32,33 @@ public class RerollCommandListener extends ListenerAdapter {
         this.dbService = dbService;
     }
 
+    public void registerMessageOwner(String messageId, long userId) {
+        messageOwners.put(messageId, userId);
+    }
+
     @Override
-    public void onMessageReceived(@NotNull MessageReceivedEvent event) {
-        if (event.getAuthor().isBot()) return;
+    public void onSlashCommandInteraction(@NotNull SlashCommandInteractionEvent event) {
+        System.out.println("Получено сообщение: " + event.getName()); // Проверка
 
-        String message = event.getMessage().getContentRaw();
-        String user = event.getAuthor().getName();
+        if (!event.getName().equals("reroll")) return;
 
-        switch (message.toLowerCase()) {
-            case "!reroll":
-                EmbedBuilder embed = new EmbedBuilder()
-                        .setTitle("Выбор игры \uD83C\uDFAE")
-                        .setDescription("Выберете игру, которая вас интересует:")
-                        .setColor(0x00ff00);
 
-                event.getChannel().sendMessageEmbeds(embed.build())
-                        .setActionRow(
-                                Button.primary("reroll_AA", "Anime Adventures"),
-                                Button.success("reroll_AV", "Anime Vanguards"),
-                                Button.danger("reroll_ALS", "Anime Last Stand")
-                        ).queue(sentMessage -> {
-                            messageOwners.put(sentMessage.getId(), event.getAuthor().getIdLong());
+         EmbedBuilder embed = new EmbedBuilder()
+                .setTitle("Выбор игры \uD83C\uDFAE")
+                .setDescription("Выберете игру, которая вас интересует:")
+                .setColor(0x00ff00);
+
+            event.replyEmbeds(embed.build())
+                    .setActionRow(
+                        Button.primary("reroll_AA", "Anime Adventures"),
+                        Button.success("reroll_AV", "Anime Vanguards"),
+                        Button.danger("reroll_ALS", "Anime Last Stand")
+                    ).queue(response -> {
+                        // Получаем отправленное сообщение и сохраняем его id для проверки владельца при нажатии кнопок.
+                        event.getHook().retrieveOriginal().queue(message -> {
+                            messageOwners.put(message.getId(), event.getUser().getIdLong());
                         });
-        }
+            });
     }
 
     public void onButtonInteraction(@NotNull ButtonInteractionEvent event) {
@@ -133,6 +137,87 @@ public class RerollCommandListener extends ListenerAdapter {
                 rollTypeId = 2L;
             } else if ("reroll_to_passive".equals(buttonId)) {
                 rollTypeId = 3L;
+        }
+        // Если игра уже выбрана, обрабатываем кнопки типа ролла
+        System.out.println("Received roll button: '" + buttonId + "' (length: " + buttonId.length() + ")");
+
+        Long rollTypeId = switch (buttonId) {
+            case "one_roll" -> 1L;
+            case "n_roll" -> 2L;
+            case "reroll_until_passive" -> 3L;
+            default -> null;
+        };
+
+        if (rollTypeId == null) {
+            System.out.println("Unknown rollTypeId button: '" + buttonId + "'");
+            event.deferEdit().queue();
+            return;
+        }
+
+        // Получаем выбранную игру
+        Long gameId = userChoice.get(userId).get(messageId);
+        if (gameId == null) {
+            event.reply("Сначала выбери игру!").setEphemeral(true).queue();
+            return;
+        }
+
+        // Берем список пассивок из БД
+        List<Traits> traits = dbService.getTraitsByGameId(gameId);
+        if (traits.isEmpty()) {
+            event.reply("Пассивок в этой игре нету!").setEphemeral(true).queue();
+            return;
+        }
+
+        // Обработка 1 ролла
+        if (rollTypeId == 1L) {
+            rollCount.put(userId, rollCount.getOrDefault(userId, 0) + 1); // Увеличиваем счетчик
+            int count = rollCount.get(userId);
+            Traits rolledPassive = PassiveRoller.rollOnePassive(traits);
+
+            // Обновляем историю выпадений
+            rollHistory.putIfAbsent(userId, new HashMap<>());
+            Map<String, Integer> userHistory = rollHistory.get(userId);
+            userHistory.put(rolledPassive.getTraitName(), userHistory.getOrDefault(rolledPassive.getTraitName(), 0) + 1);
+
+            // Формируем строку истории выпадений в нужном формате
+            StringBuilder historyText = new StringBuilder("\n\n**📜 История выпадений:**\n");
+            for (Map.Entry<String, Integer> entry : userHistory.entrySet()) {
+                historyText.append(String.format("%s (%d раз)\n", entry.getKey(), entry.getValue()));
+            }
+
+            if (rolledPassive != null) {
+                String traitInfo = "**Название**: " + rolledPassive.getTraitName() + "\n" +
+                        "**Редкость**: " + rolledPassive.getTraitRarity() + "\n" +
+                        "**Шанс**: " + String.format("%.2f%%", rolledPassive.getTraitChance()) + "\n\n" +
+                        "**Описание**: " + rolledPassive.getTraitDescription() + "\n\n" +
+                        "**Роллов сделано**: " + count + historyText.toString();
+
+                // Если взаимодействие уже подтверждено, обновляем через hook
+                if (event.isAcknowledged()) {
+                    event.getHook().editOriginalEmbeds(new EmbedBuilder()
+                                    .setTitle("Вам выпала пассивка! 🎉")
+                                    .setDescription(traitInfo)
+                                    .setColor(0x00ff00)
+                                    .build())
+                            .setActionRow(
+                                    Button.primary("one_roll", "Один ролл"),
+                                    Button.success("n_roll", "Определённое количество роллов"),
+                                    Button.danger("reroll_until_passive", "До выбранной пассивки"),
+                                    Button.secondary("reset_rolls", "🔄 Reset")
+                            ).queue();
+                } else {
+                    event.editMessageEmbeds(new EmbedBuilder()
+                                    .setTitle("Вам выпала пассивка! 🎉")
+                                    .setDescription(traitInfo)
+                                    .setColor(0x00ff00)
+                                    .build())
+                            .setActionRow(
+                                    Button.primary("one_roll", "Один ролл"),
+                                    Button.success("n_roll", "Определённое количество роллов"),
+                                    Button.danger("reroll_until_passive", "До выбранной пассивки"),
+                                    Button.secondary("reset_rolls", "🔄 Reset")
+                            ).queue();
+                }
             } else {
                 System.out.println("Unknown roll type button: '" + buttonId + "'");
                 // Вместо reply — лучше просто подтвердить взаимодействие, чтобы не возникало ошибки:
@@ -362,9 +447,9 @@ public class RerollCommandListener extends ListenerAdapter {
 
             event.editMessageEmbeds(embed.build())
                     .setActionRow(
-                            Button.primary("reroll_one_roll", "Один ролл"),
-                            Button.success("reroll_n_roll", "Определённое количество роллов"),
-                            Button.danger("reroll_to_passive", "До выбранной пассивки"),
+                            Button.primary("one_roll", "Один ролл"),
+                            Button.success("n_roll", "Определённое количество роллов"),
+                            Button.danger("reroll_until_passive", "До выбранной пассивки"),
                             Button.secondary("reset_rolls", "🔄 Reset")
                     ).queue();
         }
@@ -378,9 +463,9 @@ public class RerollCommandListener extends ListenerAdapter {
         if (event.isAcknowledged()) {
             event.getHook().editOriginalEmbeds(embed.build())
                     .setActionRow(
-                            Button.primary("reroll_one_roll", "Один ролл"),
-                            Button.success("reroll_n_roll", "Определённое количество роллов"),
-                            Button.danger("reroll_to_passive", "До выбранной пассивки"),
+                            Button.primary("one_roll", "Один ролл"),
+                            Button.success("n_roll", "Определённое количество роллов"),
+                            Button.danger("reroll_until_passive", "До выбранной пассивки"),
                             Button.secondary("reset_rolls", "🔄 Reset")
                     ).queue(
                             success -> System.out.println("Сообщение обновлено успешно через hook!"),
@@ -389,9 +474,9 @@ public class RerollCommandListener extends ListenerAdapter {
         } else {
             event.editMessageEmbeds(embed.build())
                     .setActionRow(
-                            Button.primary("reroll_one_roll", "Один ролл"),
-                            Button.success("reroll_n_roll", "Определённое количество роллов"),
-                            Button.danger("reroll_to_passive", "До выбранной пассивки"),
+                            Button.primary("one_roll", "Один ролл"),
+                            Button.success("n_roll", "Определённое количество роллов"),
+                            Button.danger("reroll_until_passive", "До выбранной пассивки"),
                             Button.secondary("reset_rolls", "🔄 Reset")
                     ).queue(
                             success -> System.out.println("Сообщение обновлено успешно!"),

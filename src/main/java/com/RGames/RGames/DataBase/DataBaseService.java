@@ -39,8 +39,8 @@ public class DataBaseService {
     }
 
     //Получаю информацию по типу и id
-    public String getContent(Game gameId, String type) {
-        return infoRepository.findByGameIdAndType(gameId, type)
+    public String getContent(Game game, String type) {
+        return infoRepository.findByGameIdAndType(game.getId(), type)
                 .map(info -> info.getContent()) // Берём саму ссылку/путь из найденной записи
                 .orElse("Информация не найдена.");
     }
