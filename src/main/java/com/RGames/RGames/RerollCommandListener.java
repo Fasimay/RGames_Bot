@@ -43,22 +43,22 @@ public class RerollCommandListener extends ListenerAdapter {
         if (!event.getName().equals("reroll")) return;
 
 
-         EmbedBuilder embed = new EmbedBuilder()
+        EmbedBuilder embed = new EmbedBuilder()
                 .setTitle("Выбор игры \uD83C\uDFAE")
                 .setDescription("Выберете игру, которая вас интересует:")
                 .setColor(0x00ff00);
 
-            event.replyEmbeds(embed.build())
-                    .setActionRow(
+        event.replyEmbeds(embed.build())
+                .setActionRow(
                         Button.primary("reroll_AA", "Anime Adventures"),
                         Button.success("reroll_AV", "Anime Vanguards"),
                         Button.danger("reroll_ALS", "Anime Last Stand")
-                    ).queue(response -> {
-                        // Получаем отправленное сообщение и сохраняем его id для проверки владельца при нажатии кнопок.
-                        event.getHook().retrieveOriginal().queue(message -> {
-                            messageOwners.put(message.getId(), event.getUser().getIdLong());
-                        });
-            });
+                ).queue(response -> {
+                    // Получаем отправленное сообщение и сохраняем его id для проверки владельца при нажатии кнопок.
+                    event.getHook().retrieveOriginal().queue(message -> {
+                        messageOwners.put(message.getId(), event.getUser().getIdLong());
+                    });
+                });
     }
 
     public void onButtonInteraction(@NotNull ButtonInteractionEvent event) {
@@ -81,6 +81,7 @@ public class RerollCommandListener extends ListenerAdapter {
             return;
         }
 
+        // Если нажата кнопка сброса
         if ("reset_rolls".equals(buttonId)) {
             // Сбрасываем выбор игры и счетчик роллов
             userChoice.remove(userId);
@@ -104,9 +105,10 @@ public class RerollCommandListener extends ListenerAdapter {
             return;
         }
 
-        // Если пользователь еще не выбрал игру, обрабатываем кнопки выбора игры
-        if (!userChoice.containsKey(userId)) {
-            Long gameId = null;
+        // Обработка выбора игры
+        if (buttonId.equals("reroll_AV") || buttonId.equals("reroll_AA") || buttonId.equals("reroll_ALS")) {
+            Map<String, Long> userGames = userChoice.getOrDefault(userId, new HashMap<>());
+            Long gameId;
             switch (buttonId) {
                 case "reroll_AV":
                     gameId = 1L;
@@ -118,28 +120,23 @@ public class RerollCommandListener extends ListenerAdapter {
                     gameId = 3L;
                     break;
                 default:
-                    System.out.println("Unknown gameId button: '" + buttonId + "'");
-                    // Вместо reply — лучше просто подтвердить взаимодействие, чтобы не возникало ошибки:
+                    System.out.println("Неизвестная кнопка выбора игры: '" + buttonId + "'");
                     event.deferEdit().queue();
                     return;
             }
-            userChoice.put(userId, gameId);
-            // Обновляем сообщение, показывая кнопки для выбора типа ролла
+            userGames.put(messageId, gameId);
+            userChoice.put(userId, userGames);
             sendRollOptions(event);
             return;
-        } else {
-            // Если игра уже выбрана, обрабатываем кнопки типа ролла
-            System.out.println("Received roll button: '" + buttonId + "' (length: " + buttonId.length() + ")");
-            Long rollTypeId = null;
-            if ("reroll_one_roll".equals(buttonId)) {
-                rollTypeId = 1L;
-            } else if ("reroll_n_roll".equals(buttonId)) {
-                rollTypeId = 2L;
-            } else if ("reroll_to_passive".equals(buttonId)) {
-                rollTypeId = 3L;
         }
-        // Если игра уже выбрана, обрабатываем кнопки типа ролла
-        System.out.println("Received roll button: '" + buttonId + "' (length: " + buttonId.length() + ")");
+
+        // Обработка кнопок выбора типа ролла ("one_roll", "n_roll", "reroll_until_passive")
+        Map<String, Long> userGames = userChoice.get(userId);
+        if (userGames == null || !userGames.containsKey(messageId)) {
+            event.reply("Сначала выберите игру!").setEphemeral(true).queue();
+            return;
+        }
+        Long gameId = userGames.get(messageId);
 
         Long rollTypeId = switch (buttonId) {
             case "one_roll" -> 1L;
@@ -149,22 +146,15 @@ public class RerollCommandListener extends ListenerAdapter {
         };
 
         if (rollTypeId == null) {
-            System.out.println("Unknown rollTypeId button: '" + buttonId + "'");
+            System.out.println("Неизвестная кнопка типа ролла: '" + buttonId + "'");
             event.deferEdit().queue();
             return;
         }
 
-        // Получаем выбранную игру
-        Long gameId = userChoice.get(userId).get(messageId);
-        if (gameId == null) {
-            event.reply("Сначала выбери игру!").setEphemeral(true).queue();
-            return;
-        }
-
-        // Берем список пассивок из БД
+        // Получаем список пассивок из БД
         List<Traits> traits = dbService.getTraitsByGameId(gameId);
         if (traits.isEmpty()) {
-            event.reply("Пассивок в этой игре нету!").setEphemeral(true).queue();
+            event.reply("В этой игре отсутствуют пассивки!").setEphemeral(true).queue();
             return;
         }
 
@@ -224,120 +214,53 @@ public class RerollCommandListener extends ListenerAdapter {
                 event.deferEdit().queue();
                 return;
             }
-            // Получаем выбранную игру
-            Long gameId = userChoice.get(userId);
-            if (gameId == null) {
-                event.reply("Сначала выбери игру!").setEphemeral(true).queue();
-                return;
-            }
-            // Берем список пассивок из БД
-            List<Traits> traits = dbService.getTraitsByGameId(gameId);
-            if (traits.isEmpty()) {
-                event.reply("Пассивок в этой игре нету!").setEphemeral(true).queue();
-                return;
+        }
 
-            // Обработка 1 ролла    
-            }
-            if (rollTypeId == 1L) {
-                rollCount.put(userId, rollCount.getOrDefault(userId, 0) + 1); // Увеличиваем счетчик
-                int count = rollCount.get(userId);
-                Traits rolledPassive = PassiveRoller.rollOnePassive(traits);
+        // Обработка нескольких роллов (n_roll)
+        if (rollTypeId == 2L) {
+            TextInput rollCountInput = TextInput.create("roll_count", "Количество роллов", TextInputStyle.SHORT)
+                    .setPlaceholder("Введите число (например, 10)")
+                    .setRequired(true)
+                    .setMinLength(1)
+                    .setMaxLength(4) // до 4 символов, т.е. число до 1000
+                    .build();
 
-                // Обновляем историю выпадений
-                rollHistory.putIfAbsent(userId, new HashMap<>());
-                Map<String, Integer> userHistory = rollHistory.get(userId);
-                userHistory.put(rolledPassive.getTraitName(), userHistory.getOrDefault(rolledPassive.getTraitName(), 0) + 1);
+            Modal modal = Modal.create("roll_count_modal", "Выбор количества роллов")
+                    .addActionRow(rollCountInput)
+                    .build();
 
-                // Формируем строку истории выпадений в нужном формате
-                StringBuilder historyText = new StringBuilder("\n\n**📜 История выпадений:**\n");
-                for (Map.Entry<String, Integer> entry : userHistory.entrySet()) {
-                    historyText.append(String.format("%s (%d раз)\n", entry.getKey(), entry.getValue()));
-                }
+            event.replyModal(modal).queue();
+            return;
+        }
 
-                if (rolledPassive != null) {
-                    String traitInfo = "**Название**: " + rolledPassive.getTraitName() + "\n" +
-                            "**Редкость**: " + rolledPassive.getTraitRarity() + "\n" +
-                            "**Шанс**: " + String.format("%.2f%%", rolledPassive.getTraitChance()) + "\n\n" +
-                            "**Описание**: " + rolledPassive.getTraitDescription() + "\n\n" +
-                            "**Роллов сделано**: " + count + historyText.toString();
+        // Обработка роллов до выбранной пассивки
+        if (rollTypeId == 3L) {
+            EmbedBuilder embed = new EmbedBuilder()
+                    .setTitle("Выберите пассивку 🎯")
+                    .setDescription("Нажмите на кнопку с пассивкой, которую хотите получить.")
+                    .setColor(0x00ff00);
 
-                    // Если взаимодействие уже подтверждено, обновляем через hook
-                    if (event.isAcknowledged()) {
-                        event.getHook().editOriginalEmbeds(new EmbedBuilder()
-                                        .setTitle("Вам выпала пассивка! 🎉")
-                                        .setDescription(traitInfo)
-                                        .setColor(0x00ff00)
-                                        .build())
-                                .setActionRow(
-                                        Button.primary("reroll_one_roll", "Один ролл"),
-                                        Button.success("reroll_n_roll", "Определённое количество роллов"),
-                                        Button.danger("reroll_to_passive", "До выбранной пассивки"),
-                                        Button.secondary("reset_rolls", "🔄 Reset")
-                                ).queue();
-                    } else {
-                        event.editMessageEmbeds(new EmbedBuilder()
-                                        .setTitle("Вам выпала пассивка! 🎉")
-                                        .setDescription(traitInfo)
-                                        .setColor(0x00ff00)
-                                        .build())
-                                .setActionRow(
-                                        Button.primary("reroll_one_roll", "Один ролл"),
-                                        Button.success("reroll_n_roll", "Определённое количество роллов"),
-                                        Button.danger("reroll_to_passive", "До выбранной пассивки"),
-                                        Button.secondary("reset_rolls", "🔄 Reset")
-                                ).queue();
-                    }
-                } else {
-                    event.reply("Ошибка! Не удалось выбить пассивку.").setEphemeral(true).queue();
-                }
+            List<SelectOption> options = new ArrayList<>();
+            for (Traits trait : traits) {
+                options.add(SelectOption.of(trait.getTraitName(), "roll_target_" + trait.getTraitName()));
             }
 
-            // Обработка n колличество роллов
-            if (rollTypeId == 2L) {
-                TextInput rollCountInput = TextInput.create("roll_count", "Количество роллов", TextInputStyle.SHORT)
-                        .setPlaceholder("Введите число (например, 10)")
-                        .setRequired(true)
-                        .setMinLength(1)
-                        .setMaxLength(1000) // Ограничение, например, 99 роллов максимум
-                        .build();
+            StringSelectMenu menu = StringSelectMenu.create("passive_select_menu")
+                    .setPlaceholder("Выберите пассивку")
+                    .addOptions(options)
+                    .build();
 
-                Modal modal = Modal.create("roll_count_modal", "Выбор количества роллов")
-                        .addActionRow(rollCountInput)
-                        .build();
-
-                event.replyModal(modal).queue();
-            }
-
-            // Обработка роллов до пассивки
-            if (rollTypeId == 3L) {
-                EmbedBuilder embed = new EmbedBuilder()
-                        .setTitle("Выберите пассивку 🎯")
-                        .setDescription("Нажмите на кнопку с пассивкой, которую хотите получить.")
-                        .setColor(0x00ff00);
-
-                List<SelectOption> options = new ArrayList<>();
-                for (Traits trait : traits) {
-                    options.add(SelectOption.of(trait.getTraitName(), "roll_target_" + trait.getTraitName()));
-                }
-
-                StringSelectMenu menu = StringSelectMenu.create("passive_select_menu")
-                        .setPlaceholder("Выберите пассивку")
-                        .addOptions(options)
-                        .build();
-
-                event.editMessageEmbeds(embed.build()).setActionRow(menu).queue();
-            }
+            event.editMessageEmbeds(embed.build()).setActionRow(menu).queue();
         }
     }
 
     @Override
     public void onModalInteraction(@NotNull ModalInteractionEvent event) {
-        System.out.println("Получено событие модального окна. Все значения: " + event.getValues());
+        System.out.println("Получено событие модального окна. Значения: " + event.getValues());
 
-        // Проверяем наличие значения с идентификатором "roll_count"
         if (event.getValue("roll_count") == null) {
-            System.out.println("Значение с ключом 'roll_count' не найдено.");
-            event.reply("Не удалось получить значение роллов, попробуйте снова.").setEphemeral(true).queue();
+            System.out.println("Значение 'roll_count' не найдено.");
+            event.reply("Не удалось получить значение количества роллов, попробуйте снова.").setEphemeral(true).queue();
             return;
         }
 
@@ -347,64 +270,62 @@ public class RerollCommandListener extends ListenerAdapter {
         long userId = event.getUser().getIdLong();
 
         try {
-            int rollCount = Integer.parseInt(rollCountStr);
-            if (rollCount <= 0 || rollCount > 10000) {
-                event.reply("Число должно быть от 1 до 1000 еблан!").setEphemeral(true).queue();
+            int rollsToDo = Integer.parseInt(rollCountStr);
+            if (rollsToDo <= 0 || rollsToDo > 1000) {
+                event.reply("Число должно быть от 1 до 1000!").setEphemeral(true).queue();
                 return;
             }
 
-            // Получаем выбранную игру пользователя
-            Long gameId = userChoice.get(userId);
-            if (gameId == null) {
+            Map<String, Long> userGames = userChoice.get(userId);
+            if (userGames == null || userGames.isEmpty()) {
                 event.reply("Сначала выберите игру!").setEphemeral(true).queue();
                 return;
             }
+            // Для модального окна используем первое найденное сообщение пользователя
+            String messageId = userGames.keySet().iterator().next();
+            Long gameId = userGames.get(messageId);
 
-            try {
-                // Получаем пассивки из игры
-                List<Traits> traits = dbService.getTraitsByGameId(gameId);
-                System.out.println("Получено пассивок: " + traits.size());
-                if (traits.isEmpty()) {
-                    event.reply("Пассивок в этой игре нет!").setEphemeral(true).queue();
-                    return;
-                }
-
-                // Отправка пассивок в метод подсчета
-                List<Traits> rolledPassives = PassiveRoller.rollNPassives(traits, rollCount);
-
-                // Группируем пассивки по названию
-                Map<String, Integer> countMap = new HashMap<>();
-                Map<String, Traits> traitDetails = new HashMap<>();
-
-                for (Traits trait : rolledPassives) {
-                    String name = trait.getTraitName();
-                    countMap.put(name, countMap.getOrDefault(name, 0) + 1);
-                    traitDetails.putIfAbsent(name, trait);
-                }
-
-                List<Map.Entry<String, Integer>> sortedPassives = new ArrayList<>(countMap.entrySet());
-                sortedPassives.sort(Comparator.comparing(entry -> traitDetails.get(entry.getKey()).getTraitChance()));
-
-                EmbedBuilder embed = new EmbedBuilder();
-                embed.setTitle("Вам выпали такие пассивки! 🎉").setColor(0x00ff00);
-
-                for (Map.Entry<String, Integer> entry : sortedPassives) {
-                    Traits trait = traitDetails.get(entry.getKey());
-                    int count = entry.getValue();
-
-                    embed.addField(trait.getTraitName() + " (" + count + ")\u200B",
-                            "**Редкость:** " + trait.getTraitRarity() + "\n" +
-                            "**Шанс:** " + String.format("%.2f%%", trait.getTraitChance()), false);
-
-                }
-
-                event.editMessageEmbeds(embed.build()).queue();
-            } catch (Exception e) {
-                e.printStackTrace();
-                event.reply("Произошла ошибка при обращении к базе данных!").setEphemeral(true).queue();
+            List<Traits> traits = dbService.getTraitsByGameId(gameId);
+            System.out.println("Получено пассивок: " + traits.size());
+            if (traits.isEmpty()) {
+                event.reply("В этой игре отсутствуют пассивки!").setEphemeral(true).queue();
+                return;
             }
+
+            List<Traits> rolledPassives = PassiveRoller.rollNPassives(traits, rollsToDo);
+
+            // Группируем результаты
+            Map<String, Integer> countMap = new HashMap<>();
+            Map<String, Traits> traitDetails = new HashMap<>();
+
+            for (Traits trait : rolledPassives) {
+                String name = trait.getTraitName();
+                countMap.put(name, countMap.getOrDefault(name, 0) + 1);
+                traitDetails.putIfAbsent(name, trait);
+            }
+
+            List<Map.Entry<String, Integer>> sortedPassives = new ArrayList<>(countMap.entrySet());
+            sortedPassives.sort(Comparator.comparing(entry -> traitDetails.get(entry.getKey()).getTraitChance()));
+
+            EmbedBuilder embed = new EmbedBuilder();
+            embed.setTitle("Выпавшие пассивки! 🎉").setColor(0x00ff00);
+
+            for (Map.Entry<String, Integer> entry : sortedPassives) {
+                Traits trait = traitDetails.get(entry.getKey());
+                int count = entry.getValue();
+                embed.addField(trait.getTraitName() + " (" + count + ")",
+                        "**Редкость:** " + trait.getTraitRarity() + "\n" +
+                                "**Шанс:** " + String.format("%.2f%%", trait.getTraitChance()),
+                        false);
+            }
+
+            event.editMessageEmbeds(embed.build()).queue();
+
         } catch (NumberFormatException e) {
             event.reply("Введите корректное число!").setEphemeral(true).queue();
+        } catch (Exception e) {
+            e.printStackTrace();
+            event.reply("Произошла ошибка при обращении к базе данных!").setEphemeral(true).queue();
         }
     }
 
@@ -413,13 +334,16 @@ public class RerollCommandListener extends ListenerAdapter {
         if (event.getComponentId().equals("passive_select_menu")) {
             String targetPassiveName = event.getSelectedOptions().get(0).getValue().replace("roll_target_", "");
             System.out.println("Выбранная пассивка: " + targetPassiveName);
-            Long userId = event.getUser().getIdLong();
-            Long gameId = userChoice.get(userId);
+            long userId = event.getUser().getIdLong();
 
-            if (gameId == null) {
-                event.reply("Сначала выбери игру ебло!").setEphemeral(true).queue();
+            Map<String, Long> userGames = userChoice.get(userId);
+            if (userGames == null || userGames.isEmpty()) {
+                event.reply("Сначала выберите игру!").setEphemeral(true).queue();
                 return;
             }
+            // Для простоты выбираем первое сообщение пользователя
+            String messageId = userGames.keySet().iterator().next();
+            Long gameId = userGames.get(messageId);
 
             List<Traits> traits = dbService.getTraitsByGameId(gameId);
 
@@ -429,7 +353,7 @@ public class RerollCommandListener extends ListenerAdapter {
                     .orElse(null);
 
             if (targetTrait == null) {
-                event.reply("Не удалось найти пассивку еж еблан!").setEphemeral(true).queue();
+                event.reply("Не удалось найти выбранную пассивку!").setEphemeral(true).queue();
                 return;
             }
 
@@ -441,7 +365,7 @@ public class RerollCommandListener extends ListenerAdapter {
                     "**Описание**: " + targetTrait.getTraitDescription();
 
             EmbedBuilder embed = new EmbedBuilder()
-                    .setTitle("Вы выбили **" + targetPassiveName + "** за **" + rolls + "** роллов! 🎉")
+                    .setTitle("Вы выбили " + targetPassiveName + " за " + rolls + " роллов! 🎉")
                     .setDescription(traitInfo)
                     .setColor(0x00ff00);
 
@@ -455,33 +379,34 @@ public class RerollCommandListener extends ListenerAdapter {
         }
     }
 
-    private void sendRollOptions(ButtonInteractionEvent event) {
-        EmbedBuilder embed = new EmbedBuilder()
-                .setTitle("Выбор типа ролла")
-                .setDescription("Выберите тип ролла, который вас интересует:")
-                .setColor(0x00ff00);
-        if (event.isAcknowledged()) {
-            event.getHook().editOriginalEmbeds(embed.build())
-                    .setActionRow(
-                            Button.primary("one_roll", "Один ролл"),
-                            Button.success("n_roll", "Определённое количество роллов"),
-                            Button.danger("reroll_until_passive", "До выбранной пассивки"),
-                            Button.secondary("reset_rolls", "🔄 Reset")
-                    ).queue(
-                            success -> System.out.println("Сообщение обновлено успешно через hook!"),
-                            failure -> System.out.println("Ошибка при обновлении через hook: " + failure.getMessage())
-                    );
-        } else {
-            event.editMessageEmbeds(embed.build())
-                    .setActionRow(
-                            Button.primary("one_roll", "Один ролл"),
-                            Button.success("n_roll", "Определённое количество роллов"),
-                            Button.danger("reroll_until_passive", "До выбранной пассивки"),
-                            Button.secondary("reset_rolls", "🔄 Reset")
-                    ).queue(
-                            success -> System.out.println("Сообщение обновлено успешно!"),
-                            failure -> System.out.println("Ошибка при обновлении: " + failure.getMessage())
-                    );
-        }
+
+    private void sendRollOptions (ButtonInteractionEvent event){
+            EmbedBuilder embed = new EmbedBuilder()
+                    .setTitle("Выбор типа ролла")
+                    .setDescription("Выберите тип ролла, который вас интересует:")
+                    .setColor(0x00ff00);
+            if (event.isAcknowledged()) {
+                event.getHook().editOriginalEmbeds(embed.build())
+                        .setActionRow(
+                                Button.primary("one_roll", "Один ролл"),
+                                Button.success("n_roll", "Определённое количество роллов"),
+                                Button.danger("reroll_until_passive", "До выбранной пассивки"),
+                                Button.secondary("reset_rolls", "🔄 Reset")
+                        ).queue(
+                                success -> System.out.println("Сообщение обновлено успешно через hook!"),
+                                failure -> System.out.println("Ошибка при обновлении через hook: " + failure.getMessage())
+                        );
+            } else {
+                event.editMessageEmbeds(embed.build())
+                        .setActionRow(
+                                Button.primary("one_roll", "Один ролл"),
+                                Button.success("n_roll", "Определённое количество роллов"),
+                                Button.danger("reroll_until_passive", "До выбранной пассивки"),
+                                Button.secondary("reset_rolls", "🔄 Reset")
+                        ).queue(
+                                success -> System.out.println("Сообщение обновлено успешно!"),
+                                failure -> System.out.println("Ошибка при обновлении: " + failure.getMessage())
+                        );
+            }
     }
 }
